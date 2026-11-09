@@ -6,10 +6,8 @@ YouTube videos, channels and playlists, played in sync for everyone – in up to
 
 ## Install
 
-Couchmate servers ship with this plugin: in the admin panel, open **Plugins** and press **Install** next to it.
-
-To install it by hand, download the latest release as a zip (**Releases → Source code (zip)**) and upload it under
-**Plugins → Upload plugin (.zip)**.
+In the Couchmate admin panel, open **Plugins**: it is listed under **Get plugins** – press **Install**, then switch
+it on and fill in its settings.
 
 ## Updates
 
