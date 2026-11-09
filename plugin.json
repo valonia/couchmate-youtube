@@ -1,0 +1,79 @@
+{
+  "id": "youtube",
+  "name": "YouTube",
+  "version": "1.1.0",
+  "description": "YouTube videos, channels and playlists, played in sync for everyone – in up to 1080p or as audio only, without ads. Sponsor segments are skipped with SponsorBlock.",
+  "main": "index.mjs",
+  "repository": "valonia/couchmate-youtube",
+  "requires": "Internet access from the server. The plugin downloads yt-dlp by itself and keeps it up to date. No YouTube account needed.",
+  "homepage": "https://github.com/yt-dlp/yt-dlp",
+  "settings": [
+    {
+      "key": "topics",
+      "label": "Topics on the front page",
+      "type": "text",
+      "default": "Music, News, Gaming",
+      "help": "A row of videos for each search, separated by commas, e.g. \"Avicii, Swedish news, Minecraft\"."
+    },
+    {
+      "key": "channels",
+      "label": "Channels on the front page",
+      "type": "text",
+      "default": "",
+      "help": "Channels separated by commas: @name or a youtube.com link. Each gets a row with its latest videos."
+    },
+    {
+      "key": "playlists",
+      "label": "Playlists on the front page",
+      "type": "text",
+      "default": "",
+      "help": "Playlist links separated by commas. Each gets a row; the videos play one after another."
+    },
+    {
+      "key": "quality",
+      "label": "Default quality",
+      "type": "select",
+      "default": "1080",
+      "options": [
+        {
+          "value": "1080",
+          "label": "1080p"
+        },
+        {
+          "value": "720",
+          "label": "720p"
+        },
+        {
+          "value": "480",
+          "label": "480p"
+        },
+        {
+          "value": "audio",
+          "label": "Audio only"
+        }
+      ],
+      "help": "Can be changed in the player's settings while watching."
+    },
+    {
+      "key": "autoplay",
+      "label": "Autoplay",
+      "type": "bool",
+      "default": true,
+      "help": "When a single video ends, similar videos follow (YouTube's Mix for it). They show in the queue (arrow up in the player)."
+    },
+    {
+      "key": "sponsorBlock",
+      "label": "Skip sponsor segments (SponsorBlock)",
+      "type": "bool",
+      "default": true,
+      "help": "Segments marked by SponsorBlock's users are skipped for everyone."
+    },
+    {
+      "key": "sponsorCategories",
+      "label": "SponsorBlock: what to skip",
+      "type": "text",
+      "default": "sponsor,selfpromo,interaction,music_offtopic",
+      "help": "sponsor, selfpromo, interaction (\"like and subscribe\"), intro, outro, preview, music_offtopic (non-music in music videos)."
+    }
+  ]
+}
