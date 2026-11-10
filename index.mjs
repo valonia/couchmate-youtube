@@ -346,20 +346,36 @@ export default function setup(api) {
         'cache-control': 'no-store',
         ...(r ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
       });
-      for (let a = start; a <= end && !closed; a += CHUNK) {
-        if (a !== start) {
-          up = await piece(f, a, Math.min(a + CHUNK - 1, end));
-          if (!up.ok) throw new Error(`YouTube answered ${up.status}`);
-        }
-        for await (const buf of up.body) {
-          if (closed) break;
-          if (!res.write(buf)) {
-            await new Promise((ok) => {
-              const done = () => { res.off('drain', done); res.off('close', done); ok(); };
-              res.on('drain', done);
-              res.on('close', done);
-            });
+      // YouTube sometimes cuts a connection mid-piece ("terminated"). Then carry on from the exact byte the app has
+      // got, so it never notices – some players (VLC with a separate audio file) would otherwise lose the sound.
+      let pos = start;
+      let tries = 0;
+      while (pos <= end && !closed) {
+        try {
+          if (!up) {
+            up = await piece(f, pos, Math.min(pos + CHUNK - 1, end));
+            if (up.status === 403 || up.status === 410) { f = await file(true); up = await piece(f, pos, Math.min(pos + CHUNK - 1, end)); }
+            if (!up.ok) throw new Error(`YouTube answered ${up.status}`);
           }
+          for await (const buf of up.body) {
+            if (closed) break;
+            pos += buf.length;
+            if (!res.write(buf)) {
+              await new Promise((ok) => {
+                const done = () => { res.off('drain', done); res.off('close', done); ok(); };
+                res.on('drain', done);
+                res.on('close', done);
+              });
+            }
+          }
+          up = null;
+          tries = 0;
+        } catch (e) {
+          if (closed) break;
+          up = null;
+          if (++tries > 5) throw e;
+          api.log(`stream ${vid} ${part}: ${e.message} – carrying on from byte ${pos}`);
+          await sleep(300 * tries);
         }
       }
       res.end();
