@@ -1,7 +1,7 @@
 {
   "id": "youtube",
   "name": "YouTube",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "YouTube videos, channels and playlists, played in sync for everyone – in up to 1080p or as audio only, without ads. Sponsor segments are skipped with SponsorBlock.",
   "main": "index.mjs",
   "repository": "valonia/couchmate-youtube",

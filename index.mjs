@@ -44,21 +44,32 @@ export default function setup(api) {
     return u ? (u.startsWith('//') ? `https:${u}` : u) : null;
   };
 
-  /** A small cache with a lifetime, and one request at a time per key. */
-  function cached(ttlMs, max = 300) {
+  /** A small cache with a lifetime, and one request at a time per key. With [staleMs], an answer that has run out
+   *  is still given straight away for that long while a fresh one is fetched in the background – nobody waits for
+   *  yt-dlp (several seconds per search) just because a while has passed. */
+  function cached(ttlMs, max = 300, staleMs = 0) {
     const map = new Map();
     const inflight = new Map();
     return async (key, load, ttl = ttlMs) => {
       const hit = map.get(key);
-      if (hit && hit.until > Date.now()) return hit.value;
-      if (inflight.has(key)) return inflight.get(key);
-      const p = load().then((value) => {
-        map.set(key, { value, until: Date.now() + (typeof ttl === 'function' ? ttl(value) : ttl) });
-        if (map.size > max) map.delete(map.keys().next().value);
-        return value;
-      }).finally(() => inflight.delete(key));
-      inflight.set(key, p);
-      return p;
+      const now = Date.now();
+      if (hit && hit.until > now) return hit.value;
+      const fetchNew = () => {
+        if (inflight.has(key)) return inflight.get(key);
+        const p = load().then((value) => {
+          map.delete(key);
+          map.set(key, { value, until: Date.now() + (typeof ttl === 'function' ? ttl(value) : ttl) });
+          if (map.size > max) map.delete(map.keys().next().value);
+          return value;
+        }).finally(() => inflight.delete(key));
+        inflight.set(key, p);
+        return p;
+      };
+      if (hit && now < hit.until + staleMs) {
+        fetchNew().catch(() => {}); // the old answer now, a new one for next time
+        return hit.value;
+      }
+      return fetchNew();
     };
   }
 
@@ -119,7 +130,7 @@ export default function setup(api) {
 
   // ------------------------------------------------------------------ YouTube lookups (cached)
 
-  const flatCache = cached(15 * 60 * 1000);
+  const flatCache = cached(15 * 60 * 1000, 300, 12 * 60 * 60 * 1000);
   const flat = (url, count, ttl) => flatCache(`${url}|${count}`, () => yt.json(['--flat-playlist', '--playlist-end', String(count), url], 45000), ttl);
 
   const searchVideos = async (q, n = 20) => (await flat(`ytsearch${n}:${q}`, n)).entries?.map((e) => videoItem(e)).filter(Boolean) || [];
@@ -775,6 +786,13 @@ export default function setup(api) {
   // yt-dlp is fetched (the first time) and updated now and then every day.
   yt.update();
   timers.push(setInterval(() => yt.update(), 24 * 60 * 60 * 1000));
+
+  // Keep the front page ready: built once shortly after start, then refreshed in the background every 10 minutes,
+  // so opening YouTube is instant even the first time in a while.
+  const warmHome = () => homeView().catch((e) => api.log(`front page: ${e.message}`));
+  const firstWarm = setTimeout(warmHome, 30 * 1000);
+  timers.push(setInterval(warmHome, 10 * 60 * 1000));
+  timers.push(firstWarm);
 
   return () => timers.forEach(clearInterval);
 }
