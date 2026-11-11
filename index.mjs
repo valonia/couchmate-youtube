@@ -277,6 +277,9 @@ export default function setup(api) {
       const v = {
         title: d.title, channel: d.channel || d.uploader || '', duration: d.duration || 0,
         live: d.is_live === true || d.live_status === 'is_live', image: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`, formats,
+        // For captions: the uploader's subtitles, YouTube's automatic ones, and what is known about a song.
+        subs: d.subtitles || {}, autos: d.automatic_captions || {}, language: d.language || '',
+        song: d.track || (d.categories || []).includes('Music') ? { artist: d.artist || d.creator || '', track: d.track || '' } : null,
       };
       const exp = Number(new URL(formats[0]?.url || 'http://x/').searchParams.get('expire')) * 1000;
       infos.set(vid, { v, until: exp ? exp - 15 * 60 * 1000 : Date.now() + 60 * 60 * 1000 });
@@ -396,6 +399,133 @@ export default function setup(api) {
         if (!res.headersSent) res.writeHead(502);
         res.destroy();
       }
+    }
+  });
+
+  // ------------------------------------------------------------------ captions (CC)
+  // One switch in the apps. The best text there is, in this order: the uploader's own subtitles (made for this
+  // very video), synced lyrics from LRCLIB for songs, then YouTube's automatic captions (good for speech – for
+  // music they are mostly "[Music]", so then they are left out). Translations are not fetched: YouTube limits them.
+
+  const UA = { 'User-Agent': 'Couchmate (https://github.com/valonia/couchmate-youtube)' };
+  const ccCache = cached(6 * 60 * 60 * 1000, 200);
+
+  /** A caption track's JSON3 file as cues { start, end, text } in ms. */
+  async function json3Cues(url) {
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`YouTube answered ${r.status} for the captions`);
+    const cues = [];
+    for (const e of (await r.json()).events || []) {
+      const text = (e.segs || []).map((x) => x.utf8 || '').join('').replace(/\s*\n\s*/g, ' ').trim();
+      if (!text) continue;
+      cues.push({ start: e.tStartMs || 0, end: (e.tStartMs || 0) + (e.dDurationMs || 3000), text });
+    }
+    // Automatic captions roll on (each line stays while the next comes): one line at a time.
+    cues.forEach((c, i) => { const n = cues[i + 1]; if (n && n.start > c.start && n.start < c.end) c.end = n.start; });
+    return cues;
+  }
+
+  /** The JSON3 address of a track in yt-dlp's list, for the first language that has one. */
+  function trackUrl(map, langs) {
+    for (const l of langs.filter(Boolean)) {
+      const key = Object.keys(map).find((k) => k.toLowerCase() === l || k.toLowerCase().startsWith(`${l}-`));
+      const f = key && map[key].find((x) => x.ext === 'json3');
+      if (f) return f.url;
+    }
+    return null;
+  }
+
+  /** "Artist - Song (Official Video)" → { artist, track }. */
+  function songFromTitle(title) {
+    const t = String(title || '')
+      .replace(/[([](?:[^)\]]*?(?:official|video|audio|lyric|lyrics|visuali[sz]er|hd|4k|mv|m\/v|explicit|clean)[^)\]]*)[)\]]/gi, '')
+      .replace(/\s+(?:ft\.?|feat\.?|featuring)\s+.*$/i, '').replace(/\s{2,}/g, ' ').trim();
+    const m = /^(.+?)\s+[-–—|]\s+(.+)$/.exec(t);
+    return m ? { artist: m[1].trim(), track: m[2].trim() } : { artist: '', track: t };
+  }
+
+  /** LRC ("[01:02.50] a line") → cues; an empty line ends the one before (an instrumental part). */
+  function lrcCues(lrc, endMs) {
+    const lines = [];
+    for (const row of String(lrc).split('\n')) {
+      const stamps = [...row.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+      const text = row.replace(/\[[^\]]*\]/g, '').trim();
+      for (const s of stamps) lines.push({ start: Math.round((Number(s[1]) * 60 + Number(s[2])) * 1000), text });
+    }
+    lines.sort((a, b) => a.start - b.start);
+    // A line's time is when the singing starts – shown a little before, so there is time to read it (like
+    // lyrics apps do); otherwise it feels late.
+    const LEAD = 500;
+    return lines.map((l, i) => ({
+      text: l.text,
+      start: Math.max(0, l.start - LEAD),
+      end: Math.max(0, Math.min(lines[i + 1]?.start ?? endMs, l.start + 10000) - LEAD),
+    })).filter((c) => c.text && c.end > c.start);
+  }
+
+  /** Synced lyrics from LRCLIB for a song about as long as the video (a long intro would put them out of step). */
+  async function lyricsCues(inf) {
+    const guess = songFromTitle(inf.title);
+    const artist = inf.song?.artist?.split(',')[0].trim() || guess.artist || inf.channel.replace(/\s*-\s*Topic$/i, '');
+    const track = inf.song?.track || guess.track;
+    const dur = inf.duration || 0;
+    const fits = (x) => x?.syncedLyrics && (!dur || Math.abs((x.duration || 0) - dur) <= 8);
+    let hit = null;
+    if (artist && track) {
+      const r = await fetch(`https://lrclib.net/api/get?${new URLSearchParams({ artist_name: artist, track_name: track, ...(dur ? { duration: String(Math.round(dur)) } : {}) })}`, { headers: UA, signal: AbortSignal.timeout(10000) });
+      if (r.ok) hit = await r.json();
+    }
+    if (!fits(hit)) {
+      const r = await fetch(`https://lrclib.net/api/search?${new URLSearchParams({ q: `${artist} ${track}`.trim() })}`, { headers: UA, signal: AbortSignal.timeout(10000) });
+      const list = r.ok ? await r.json() : [];
+      hit = list.filter(fits).sort((a, b) => Math.abs(a.duration - dur) - Math.abs(b.duration - dur))[0] || null;
+    }
+    return fits(hit) ? lrcCues(hit.syncedLyrics, dur * 1000) : [];
+  }
+
+  async function captionCues(vid, lang) {
+    const inf = await info(vid);
+    const own = inf.language ? inf.language.split('-')[0].toLowerCase() : '';
+    const subs = Object.fromEntries(Object.entries(inf.subs).filter(([k]) => k !== 'live_chat'));
+    const uploaded = trackUrl(subs, [lang, 'en', own]) || trackUrl(subs, Object.keys(subs).map((k) => k.toLowerCase()));
+    if (uploaded) {
+      const cues = await json3Cues(uploaded).catch((e) => { api.log(`captions ${vid}: ${e.message}`); return []; });
+      if (cues.length) return cues;
+    }
+    const music = Boolean(inf.song);
+    if (music) {
+      const cues = await lyricsCues(inf).catch((e) => { api.log(`lyrics ${vid}: ${e.message}`); return []; });
+      if (cues.length) return cues;
+    }
+    // The automatic captions in the video's own language (others are translations).
+    const orig = Object.keys(inf.autos).find((k) => k.endsWith('-orig')) || own;
+    const auto = orig && trackUrl(inf.autos, [orig.toLowerCase()]);
+    if (!auto) return [];
+    const cues = await json3Cues(auto);
+    const words = cues.filter((c) => !/^\[[^\]]*\]$/.test(c.text)); // without "[Music]", "[Applause]"
+    return words.length >= 3 && words.length >= cues.length * 0.3 ? words : [];
+  }
+
+  const vttTime = (ms) => {
+    const t = Math.max(0, Math.round(ms));
+    const p = (n, w = 2) => String(n).padStart(w, '0');
+    return `${p(Math.floor(t / 3600000))}:${p(Math.floor(t / 60000) % 60)}:${p(Math.floor(t / 1000) % 60)}.${p(t % 1000, 3)}`;
+  };
+  const vttText = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/-->/g, '→');
+
+  api.route('GET', '/cc/*', async (req, res, { path: rest, query }) => {
+    const vid = /^[A-Za-z0-9_-]{11}$/.exec(rest)?.[0];
+    if (!vid) { res.writeHead(400); return res.end(); }
+    const lang = (/^[a-z]{2,3}/.exec(String(query.get('lang') || '').toLowerCase()) || ['en'])[0];
+    try {
+      const cues = await ccCache(`${vid}|${lang}`, () => captionCues(vid, lang));
+      // Nothing for this video: an empty file, not an error (a missing subtitle file would stop the video).
+      res.writeHead(200, { 'content-type': 'text/vtt; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(`WEBVTT\n\n${cues.map((c) => `${vttTime(c.start)} --> ${vttTime(c.end)}\n${vttText(c.text)}`).join('\n\n')}\n`);
+    } catch (e) {
+      api.log(`captions ${vid}: ${e.message}`);
+      res.writeHead(200, { 'content-type': 'text/vtt; charset=utf-8', 'cache-control': 'no-store' });
+      res.end('WEBVTT\n\n');
     }
   });
 
@@ -710,6 +840,7 @@ export default function setup(api) {
       upNextBefore: 10,
       overlay,
       settings: [
+        { type: 'captions', title: 'CC' },
         {
           type: 'choice', id: 'quality', title: api.t('Quality'), default: String(s().quality || '1080'),
           options: [
@@ -764,6 +895,7 @@ export default function setup(api) {
         ...base,
         url: `/plugins/${api.id}/s/${vid}/video${q}`,
         audio: chosen.audio ? `/plugins/${api.id}/s/${vid}/audio${q}` : undefined,
+        captions: `/plugins/${api.id}/cc/${vid}`,
         type: 'file',
         live: false,
       };
