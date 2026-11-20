@@ -2,6 +2,11 @@
 
 YouTube videos, channels and playlists, played in sync for everyone – in up to 1080p or as audio only, without ads. Sponsor segments are skipped with SponsorBlock.
 
+- **Subtitles (CC):** uploaded subtitles, YouTube's automatic ones, and song lyrics from LRCLIB for music.
+- **Fast front page:** it opens straight away with the last rows while new ones are fetched in the background.
+- **For other plugins:** they can add rows to the front page and match songs to videos – the
+  [Spotify → YouTube](https://github.com/valonia/couchmate-spotify-youtube) plugin uses this.
+
 **Requires:** Internet access from the server. The plugin downloads yt-dlp by itself and keeps it up to date. No YouTube account needed.
 
 ## Install
@@ -12,7 +17,8 @@ it on and fill in its settings.
 ## Updates
 
 The server checks this repository for new releases every 6 hours. Under **Plugins** you can update with one
-click, or switch on **Update automatically** to have new versions installed as soon as they are released.
+click, or switch on **Update automatically** to have new versions installed by themselves. They wait until
+nobody is watching.
 
 To release a new version: raise `version` in `plugin.json`, commit, and publish a GitHub release tagged
 `v<version>` (e.g. `v1.1.0`).
